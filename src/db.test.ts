@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { createHash } from 'crypto';
 import { createDb, hasSubmittedToday, recordSubmission } from './db.js';
 import Database from 'better-sqlite3';
 
@@ -19,11 +20,10 @@ describe('dedup database', () => {
   });
 
   it('allows same user on different days', () => {
-    const crypto = require('crypto');
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const dateStr = yesterday.toISOString().split('T')[0];
-    const hash = crypto.createHash('sha256').update(`user123:${dateStr}`).digest('hex');
+    const hash = createHash('sha256').update(`user123:${dateStr}`).digest('hex');
     db.prepare('INSERT INTO submissions (hash) VALUES (?)').run(hash);
 
     expect(hasSubmittedToday(db, 'user123')).toBe(false);

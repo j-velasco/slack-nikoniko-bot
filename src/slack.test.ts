@@ -13,7 +13,7 @@ describe('buildMoodBlocks', () => {
     expect(actions.type).toBe('actions');
     expect(actions.elements).toHaveLength(4);
 
-    const labels = actions.elements.map((e: any) => e.text.text);
+    const labels = actions.elements!.map((e: any) => e.text.text);
     expect(labels).toEqual([
       'Awesome Day',
       'Good Day',

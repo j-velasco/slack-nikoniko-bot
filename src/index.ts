@@ -1,20 +1,34 @@
 import 'dotenv/config';
-import { App } from '@slack/bolt';
+import { App, ExpressReceiver } from '@slack/bolt';
 import { Client } from '@notionhq/client';
 import { createDb, hasSubmittedToday, recordSubmission } from './db.js';
 import { recordMoodInNotion, type Mood } from './notion.js';
 import { buildMoodBlocks } from './slack.js';
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
+  return value;
+}
+
 const MOODS: Mood[] = ['Awesome Day', 'Good Day', 'Not So Good Day', 'Horrible Day'];
 
 const db = createDb(process.env.DB_PATH ?? './mood.db');
 
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
-const databaseId = process.env.NOTION_DATABASE_ID!;
+const notion = new Client({ auth: requireEnv('NOTION_API_KEY') });
+const databaseId = requireEnv('NOTION_DATABASE_ID');
+
+const receiver = new ExpressReceiver({
+  signingSecret: requireEnv('SLACK_SIGNING_SECRET'),
+});
+
+receiver.router.get('/', (_req, res) => {
+  res.status(200).send('ok');
+});
 
 const app = new App({
-  token: process.env.SLACK_BOT_TOKEN,
-  signingSecret: process.env.SLACK_SIGNING_SECRET,
+  token: requireEnv('SLACK_BOT_TOKEN'),
+  receiver,
 });
 
 // Handle /mood slash command
@@ -63,15 +77,24 @@ for (const mood of MOODS) {
       comment = body.state.values.mood_comment.comment_input.value;
     }
 
-    // Record in both stores
-    recordSubmission(db, userId);
-    await recordMoodInNotion(notion, databaseId, mood, comment);
+    // Record in Notion first, then dedup store — if Notion fails, user can retry
+    try {
+      await recordMoodInNotion(notion, databaseId, mood, comment);
+      recordSubmission(db, userId);
 
-    await respond({
-      response_type: 'ephemeral',
-      replace_original: true,
-      text: 'Thanks! Your mood has been recorded anonymously.',
-    });
+      await respond({
+        response_type: 'ephemeral',
+        replace_original: true,
+        text: 'Thanks! Your mood has been recorded anonymously.',
+      });
+    } catch (err) {
+      console.error('Failed to record mood:', err);
+      await respond({
+        response_type: 'ephemeral',
+        replace_original: true,
+        text: 'Something went wrong. Please try again later.',
+      });
+    }
   });
 }
 
