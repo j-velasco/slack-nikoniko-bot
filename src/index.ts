@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { App, ExpressReceiver } from '@slack/bolt';
-import { Client } from '@notionhq/client';
+import { google } from 'googleapis';
 import { createDb, hasSubmittedToday, recordSubmission } from './db.js';
-import { recordMoodInNotion, type Mood } from './notion.js';
+import { recordMoodInSheets, type Mood } from './sheets.js';
 import { buildMoodBlocks } from './slack.js';
 
 function requireEnv(name: string): string {
@@ -15,8 +15,12 @@ const MOODS: Mood[] = ['Awesome Day', 'Good Day', 'Not So Good Day', 'Horrible D
 
 const db = createDb(process.env.DB_PATH ?? './mood.db');
 
-const notion = new Client({ auth: requireEnv('NOTION_API_KEY') });
-const databaseId = requireEnv('NOTION_DATABASE_ID');
+const credentials = JSON.parse(requireEnv('GOOGLE_SERVICE_ACCOUNT_KEY'));
+const auth = new google.auth.GoogleAuth({
+  credentials,
+  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+});
+const spreadsheetId = requireEnv('GOOGLE_SPREADSHEET_ID');
 
 const receiver = new ExpressReceiver({
   signingSecret: requireEnv('SLACK_SIGNING_SECRET'),
@@ -77,9 +81,9 @@ for (const mood of MOODS) {
       comment = body.state.values.mood_comment.comment_input.value;
     }
 
-    // Record in Notion first, then dedup store — if Notion fails, user can retry
+    // Record in Sheets first, then dedup store — if Sheets fails, user can retry
     try {
-      await recordMoodInNotion(notion, databaseId, mood, comment);
+      await recordMoodInSheets(auth, spreadsheetId, mood, comment);
       recordSubmission(db, userId);
 
       await respond({

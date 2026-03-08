@@ -1,4 +1,4 @@
-import type { Mood } from './notion.js';
+import type { Mood } from './sheets.js';
 
 const MOODS: { label: string; value: Mood; style?: 'primary' | 'danger' }[] = [
   { label: 'Awesome Day', value: 'Awesome Day', style: 'primary' },

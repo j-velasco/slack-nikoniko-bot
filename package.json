@@ -18,7 +18,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@notionhq/client": "^5.11.1",
+    "googleapis": "^148.0.0",
     "@slack/bolt": "^4.6.0",
     "better-sqlite3": "^12.6.2",
     "dotenv": "^17.3.1"
