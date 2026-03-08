@@ -2,10 +2,10 @@ import 'dotenv/config';
 import { App, ExpressReceiver } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import { google } from 'googleapis';
-import { createDb, hasSubmittedToday, recordSubmission, saveSchedule, getSchedule, deleteSchedule } from './db.js';
+import { createDb, hasSubmittedToday, recordSubmission, saveSchedule, getSchedule, deleteSchedule, markScheduleSent } from './db.js';
 import { recordMoodInSheets, type Mood } from './sheets.js';
 import { buildMoodBlocks } from './slack.js';
-import { roundToFiveMinutes } from './scheduler.js';
+import { roundToFiveMinutes, findDueUsers, getLocalDate } from './scheduler.js';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -29,6 +29,7 @@ const auth = new google.auth.GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 const spreadsheetId = requireEnv('GOOGLE_SPREADSHEET_ID');
+const cronSecret = process.env.CRON_SECRET;
 
 const receiver = new ExpressReceiver({
   signingSecret: requireEnv('SLACK_SIGNING_SECRET'),
@@ -36,6 +37,55 @@ const receiver = new ExpressReceiver({
 
 receiver.router.get('/', (_req, res) => {
   res.status(200).send('ok');
+});
+
+receiver.router.post('/api/send-reminders', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  try {
+    const now = new Date();
+    const dueUsers = findDueUsers(db, now);
+    let sent = 0;
+
+    for (const schedule of dueUsers) {
+      try {
+        if (hasSubmittedToday(db, schedule.user_id)) continue;
+
+        const dm = await app.client.conversations.open({ users: schedule.user_id });
+        if (!dm.channel?.id) continue;
+
+        await app.client.chat.postMessage({
+          channel: dm.channel.id,
+          text: 'Time for your daily mood check-in!',
+          blocks: [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: 'This is your daily mood check-in.',
+              },
+            },
+            ...buildMoodBlocks(),
+          ],
+        });
+
+        const localDate = getLocalDate(now, schedule.timezone);
+        markScheduleSent(db, schedule.user_id, localDate);
+        sent++;
+      } catch (err) {
+        console.error(`Failed to send reminder to ${schedule.user_id}:`, err);
+      }
+    }
+
+    res.json({ due: dueUsers.length, sent });
+  } catch (err) {
+    console.error('Failed to process reminders:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 const app = new App({
