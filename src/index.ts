@@ -46,26 +46,34 @@ const app = new App({
 app.command('/mood', async ({ command, ack, respond, client }) => {
   await ack();
 
-  if (!(await isUserInGroup(client, allowedUsergroupId, command.user_id))) {
+  try {
+    if (!(await isUserInGroup(client, allowedUsergroupId, command.user_id))) {
+      await respond({
+        response_type: 'ephemeral',
+        text: "You don't have access to this command.",
+      });
+      return;
+    }
+
+    if (hasSubmittedToday(db, command.user_id)) {
+      await respond({
+        response_type: 'ephemeral',
+        text: "You've already shared your mood today! Come back tomorrow.",
+      });
+      return;
+    }
+
     await respond({
       response_type: 'ephemeral',
-      text: "You don't have access to this command.",
+      blocks: buildMoodBlocks(),
     });
-    return;
-  }
-
-  if (hasSubmittedToday(db, command.user_id)) {
+  } catch (err) {
+    console.error('Failed to handle /mood command:', err);
     await respond({
       response_type: 'ephemeral',
-      text: "You've already shared your mood today! Come back tomorrow.",
+      text: 'Something went wrong. Please try again later.',
     });
-    return;
   }
-
-  await respond({
-    response_type: 'ephemeral',
-    blocks: buildMoodBlocks(),
-  });
 });
 
 // Handle mood button clicks
@@ -75,38 +83,38 @@ for (const mood of MOODS) {
 
     const userId = body.user.id;
 
-    if (!(await isUserInGroup(client, allowedUsergroupId, userId))) {
-      await respond({
-        response_type: 'ephemeral',
-        replace_original: true,
-        text: "You don't have access to this command.",
-      });
-      return;
-    }
-
-    if (hasSubmittedToday(db, userId)) {
-      await respond({
-        response_type: 'ephemeral',
-        replace_original: true,
-        text: "You've already shared your mood today! Come back tomorrow.",
-      });
-      return;
-    }
-
-    // Extract optional comment from the state
-    let comment: string | undefined;
-    if (
-      'state' in body &&
-      body.state &&
-      typeof body.state === 'object' &&
-      'values' in body.state &&
-      body.state.values?.mood_comment?.comment_input?.value
-    ) {
-      comment = body.state.values.mood_comment.comment_input.value;
-    }
-
-    // Record in Sheets first, then dedup store — if Sheets fails, user can retry
     try {
+      if (!(await isUserInGroup(client, allowedUsergroupId, userId))) {
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
+          text: "You don't have access to this command.",
+        });
+        return;
+      }
+
+      if (hasSubmittedToday(db, userId)) {
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
+          text: "You've already shared your mood today! Come back tomorrow.",
+        });
+        return;
+      }
+
+      // Extract optional comment from the state
+      let comment: string | undefined;
+      if (
+        'state' in body &&
+        body.state &&
+        typeof body.state === 'object' &&
+        'values' in body.state &&
+        body.state.values?.mood_comment?.comment_input?.value
+      ) {
+        comment = body.state.values.mood_comment.comment_input.value;
+      }
+
+      // Record in Sheets first, then dedup store — if Sheets fails, user can retry
       await recordMoodInSheets(auth, spreadsheetId, mood, comment);
       recordSubmission(db, userId);
 
