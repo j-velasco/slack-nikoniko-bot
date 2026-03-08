@@ -186,6 +186,23 @@ app.command('/mood', async ({ command, ack, respond, client }) => {
       return;
     }
 
+    // /mood help
+    if (subcommand === 'help') {
+      await respond({
+        response_type: 'ephemeral',
+        text: [
+          '*Available commands:*',
+          '• `/mood` — Log your mood for today',
+          '• `/mood schedule 17:00` — Set a daily reminder (uses your Slack timezone)',
+          '• `/mood schedule 17:00 America/New_York` — Set a reminder with explicit timezone',
+          '• `/mood schedule` — Show your current schedule',
+          '• `/mood unschedule` — Remove your daily reminder',
+          '• `/mood help` — Show this help message',
+        ].join('\n'),
+      });
+      return;
+    }
+
     // Default: show mood buttons (existing behavior)
     if (hasSubmittedToday(db, command.user_id)) {
       await respond({
