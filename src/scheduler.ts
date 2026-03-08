@@ -39,7 +39,7 @@ export function getLocalTime(utcDate: Date, timezone: string): string {
     timeZone: timezone,
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   });
   const parts = formatter.formatToParts(utcDate);
   const hour = parts.find((p) => p.type === 'hour')!.value;

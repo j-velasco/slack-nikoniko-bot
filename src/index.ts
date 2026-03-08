@@ -157,7 +157,7 @@ app.command('/mood', async ({ command, ack, respond, client }) => {
 
       // Validate timezone
       try {
-        Intl.DateTimeFormat(undefined, { timeZone: timezone });
+        new Intl.DateTimeFormat(undefined, { timeZone: timezone });
       } catch {
         await respond({
           response_type: 'ephemeral',
