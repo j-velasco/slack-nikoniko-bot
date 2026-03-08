@@ -25,6 +25,8 @@
 Go to "OAuth & Permissions" and add these Bot Token Scopes:
 - `commands`
 - `chat:write`
+- `users:read`
+- `im:write`
 
 ## 5. Install to Workspace
 
