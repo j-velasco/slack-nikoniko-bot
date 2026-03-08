@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest';
-import { getLocalTime, isWeekday, roundToFiveMinutes } from './scheduler.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { createDb, saveSchedule } from './db.js';
+import {
+  getLocalTime,
+  isWeekday,
+  roundToFiveMinutes,
+  findDueUsers,
+} from './scheduler.js';
 
 describe('getLocalTime', () => {
   it('converts UTC date to local time in a given timezone', () => {
@@ -48,5 +55,52 @@ describe('roundToFiveMinutes', () => {
     expect(roundToFiveMinutes('17:07')).toBe('17:05');
     expect(roundToFiveMinutes('17:00')).toBe('17:00');
     expect(roundToFiveMinutes('17:59')).toBe('17:55');
+  });
+});
+
+describe('findDueUsers', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = createDb(':memory:');
+  });
+
+  it('returns users whose local time matches the current 5-min slot on a weekday', () => {
+    saveSchedule(db, 'user1', '17:00', 'America/New_York');
+    saveSchedule(db, 'user2', '17:05', 'America/New_York');
+
+    // 2026-03-09 21:00 UTC = 17:00 EDT (America/New_York, DST active since March 8), Monday
+    const now = new Date('2026-03-09T21:00:00Z');
+    const dueUsers = findDueUsers(db, now);
+    expect(dueUsers).toHaveLength(1);
+    expect(dueUsers[0].user_id).toBe('user1');
+  });
+
+  it('returns empty on weekends', () => {
+    saveSchedule(db, 'user1', '17:00', 'America/New_York');
+
+    // 2026-03-08 is a Sunday. 21:00 UTC = 17:00 EDT
+    const now = new Date('2026-03-08T21:00:00Z');
+    const dueUsers = findDueUsers(db, now);
+    expect(dueUsers).toHaveLength(0);
+  });
+
+  it('handles multiple timezones simultaneously', () => {
+    saveSchedule(db, 'user1', '17:00', 'America/New_York');
+    saveSchedule(db, 'user2', '21:00', 'UTC');
+
+    // 2026-03-09 21:00 UTC = 17:00 EDT and 21:00 UTC, Monday
+    const now = new Date('2026-03-09T21:00:00Z');
+    const dueUsers = findDueUsers(db, now);
+    expect(dueUsers).toHaveLength(2);
+  });
+
+  it('skips users already sent today', () => {
+    saveSchedule(db, 'user1', '17:00', 'America/New_York');
+    db.prepare('UPDATE schedules SET last_sent_date = ? WHERE user_id = ?').run('2026-03-09', 'user1');
+
+    const now = new Date('2026-03-09T21:00:00Z');
+    const dueUsers = findDueUsers(db, now);
+    expect(dueUsers).toHaveLength(0);
   });
 });
