@@ -197,9 +197,27 @@ app.command('/mood', async ({ command, ack, respond, client }) => {
           '• `/mood schedule 17:00 America/New_York` — Set a reminder with explicit timezone',
           '• `/mood schedule` — Show your current schedule',
           '• `/mood unschedule` — Remove your daily reminder',
+          '• `/mood joke` — Get a mood booster',
           '• `/mood help` — Show this help message',
         ].join('\n'),
       });
+      return;
+    }
+
+    // /mood joke
+    if (subcommand === 'joke') {
+      try {
+        const res = await fetch('https://icanhazdadjoke.com/', {
+          headers: { Accept: 'application/json' },
+        });
+        const { joke } = (await res.json()) as { joke: string };
+        await respond({ response_type: 'ephemeral', text: joke });
+      } catch {
+        await respond({
+          response_type: 'ephemeral',
+          text: "The joke machine is broken. That's the real joke.",
+        });
+      }
       return;
     }
 
