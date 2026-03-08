@@ -2,9 +2,10 @@ import 'dotenv/config';
 import { App, ExpressReceiver } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import { google } from 'googleapis';
-import { createDb, hasSubmittedToday, recordSubmission } from './db.js';
+import { createDb, hasSubmittedToday, recordSubmission, saveSchedule, getSchedule, deleteSchedule } from './db.js';
 import { recordMoodInSheets, type Mood } from './sheets.js';
 import { buildMoodBlocks } from './slack.js';
+import { roundToFiveMinutes } from './scheduler.js';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -55,6 +56,87 @@ app.command('/mood', async ({ command, ack, respond, client }) => {
       return;
     }
 
+    const args = command.text.trim().split(/\s+/);
+    const subcommand = args[0]?.toLowerCase();
+
+    // /mood schedule [HH:MM] [timezone]
+    if (subcommand === 'schedule') {
+      const timeArg = args[1];
+
+      // /mood schedule (no time) — show current schedule
+      if (!timeArg) {
+        const schedule = getSchedule(db, command.user_id);
+        if (schedule) {
+          await respond({
+            response_type: 'ephemeral',
+            text: `Your daily reminder is set for *${schedule.local_time}* (${schedule.timezone}).`,
+          });
+        } else {
+          await respond({
+            response_type: 'ephemeral',
+            text: 'You have no schedule set. Use `/mood schedule HH:MM` to set one.',
+          });
+        }
+        return;
+      }
+
+      // Validate time format
+      if (!/^\d{2}:\d{2}$/.test(timeArg)) {
+        await respond({
+          response_type: 'ephemeral',
+          text: 'Invalid time format. Use HH:MM (e.g., `/mood schedule 17:00`).',
+        });
+        return;
+      }
+
+      const [h, m] = timeArg.split(':').map(Number);
+      if (h < 0 || h > 23 || m < 0 || m > 59) {
+        await respond({
+          response_type: 'ephemeral',
+          text: 'Invalid time. Hours must be 00-23 and minutes 00-59.',
+        });
+        return;
+      }
+
+      // Determine timezone: explicit arg or Slack profile
+      let timezone = args[2];
+      if (!timezone) {
+        const userInfo = await client.users.info({ user: command.user_id });
+        timezone = userInfo.user?.tz ?? 'UTC';
+      }
+
+      // Validate timezone
+      try {
+        Intl.DateTimeFormat(undefined, { timeZone: timezone });
+      } catch {
+        await respond({
+          response_type: 'ephemeral',
+          text: `Invalid timezone: "${timezone}". Use an IANA timezone like America/New_York.`,
+        });
+        return;
+      }
+
+      const roundedTime = roundToFiveMinutes(timeArg);
+      saveSchedule(db, command.user_id, roundedTime, timezone);
+
+      await respond({
+        response_type: 'ephemeral',
+        text: `Daily mood reminder set for *${roundedTime}* (${timezone}), weekdays only.`,
+      });
+      return;
+    }
+
+    // /mood unschedule
+    if (subcommand === 'unschedule') {
+      deleteSchedule(db, command.user_id);
+      await respond({
+        response_type: 'ephemeral',
+        text: 'Your daily mood reminder has been removed.',
+      });
+      return;
+    }
+
+    // Default: show mood buttons (existing behavior)
     if (hasSubmittedToday(db, command.user_id)) {
       await respond({
         response_type: 'ephemeral',
