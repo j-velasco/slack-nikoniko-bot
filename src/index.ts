@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { App, ExpressReceiver } from '@slack/bolt';
+import type { WebClient } from '@slack/web-api';
 import { google } from 'googleapis';
 import { createDb, hasSubmittedToday, recordSubmission } from './db.js';
 import { recordMoodInSheets, type Mood } from './sheets.js';
@@ -12,6 +13,12 @@ function requireEnv(name: string): string {
 }
 
 const MOODS: Mood[] = ['Awesome Day', 'Good Day', 'Not So Good Day', 'Horrible Day'];
+const allowedUsergroupId = requireEnv('SLACK_ALLOWED_USERGROUP');
+
+async function isUserInGroup(client: WebClient, usergroupId: string, userId: string): Promise<boolean> {
+  const result = await client.usergroups.users.list({ usergroup: usergroupId });
+  return result.users?.includes(userId) ?? false;
+}
 
 const db = createDb(process.env.DB_PATH ?? './mood.db');
 
@@ -36,8 +43,16 @@ const app = new App({
 });
 
 // Handle /mood slash command
-app.command('/mood', async ({ command, ack, respond }) => {
+app.command('/mood', async ({ command, ack, respond, client }) => {
   await ack();
+
+  if (!(await isUserInGroup(client, allowedUsergroupId, command.user_id))) {
+    await respond({
+      response_type: 'ephemeral',
+      text: "You don't have access to this command.",
+    });
+    return;
+  }
 
   if (hasSubmittedToday(db, command.user_id)) {
     await respond({
@@ -55,10 +70,19 @@ app.command('/mood', async ({ command, ack, respond }) => {
 
 // Handle mood button clicks
 for (const mood of MOODS) {
-  app.action(`mood_${mood}`, async ({ ack, body, respond }) => {
+  app.action(`mood_${mood}`, async ({ ack, body, respond, client }) => {
     await ack();
 
     const userId = body.user.id;
+
+    if (!(await isUserInGroup(client, allowedUsergroupId, userId))) {
+      await respond({
+        response_type: 'ephemeral',
+        replace_original: true,
+        text: "You don't have access to this command.",
+      });
+      return;
+    }
 
     if (hasSubmittedToday(db, userId)) {
       await respond({
