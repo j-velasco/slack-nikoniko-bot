@@ -3,7 +3,7 @@ import { App, ExpressReceiver } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import { google } from 'googleapis';
 import { createDb, hasSubmittedToday, recordSubmission, saveSchedule, getSchedule, deleteSchedule, markScheduleSent } from './db.js';
-import { recordMoodInSheets, type Mood } from './sheets.js';
+import { recordMoodInSheets, fetchMoodRows, summarizeMoods, type Mood } from './sheets.js';
 import { buildMoodBlocks } from './slack.js';
 import { roundToFiveMinutes, findDueUsers, getLocalDate } from './scheduler.js';
 
@@ -197,8 +197,69 @@ app.command('/mood', async ({ command, ack, respond, client }) => {
           '• `/mood schedule 17:00 America/New_York` — Set a reminder with explicit timezone',
           '• `/mood schedule` — Show your current schedule',
           '• `/mood unschedule` — Remove your daily reminder',
+          '• `/mood stats` — Team sentiment for the last 7 days (also `30d`, `all`)',
           '• `/mood joke` — Get a mood booster',
           '• `/mood help` — Show this help message',
+        ].join('\n'),
+      });
+      return;
+    }
+
+    // /mood stats [Nd|all]
+    if (subcommand === 'stats') {
+      const windowArg = args[1]?.toLowerCase();
+      let days: number | null = 7;
+      let label = 'last 7 days';
+
+      if (windowArg) {
+        if (windowArg === 'all') {
+          days = null;
+          label = 'all time';
+        } else {
+          const match = /^(\d+)d?$/.exec(windowArg);
+          if (!match) {
+            await respond({
+              response_type: 'ephemeral',
+              text: 'Invalid window. Use `/mood stats`, `/mood stats 30d`, or `/mood stats all`.',
+            });
+            return;
+          }
+          days = Number(match[1]);
+          label = `last ${days} day${days === 1 ? '' : 's'}`;
+        }
+      }
+
+      let sinceDate: string | undefined;
+      if (days !== null) {
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        sinceDate = cutoff.toISOString().split('T')[0];
+      }
+
+      const rows = await fetchMoodRows(auth, spreadsheetId);
+      const summary = summarizeMoods(rows, { sinceDate });
+
+      if (summary.total === 0) {
+        await respond({
+          response_type: 'ephemeral',
+          text: `No mood submissions in the ${label}.`,
+        });
+        return;
+      }
+
+      const order: Mood[] = ['Awesome Day', 'Good Day', 'Not So Good Day', 'Horrible Day'];
+      const lines = order.map((mood) => {
+        const count = summary.counts[mood];
+        const pct = Math.round((count / summary.total) * 100);
+        return `• ${mood}: ${count} (${pct}%)`;
+      });
+
+      await respond({
+        response_type: 'ephemeral',
+        text: [
+          `*Team mood — ${label}*`,
+          `${summary.total} submission${summary.total === 1 ? '' : 's'}, average ${summary.average!.toFixed(2)}/4.00`,
+          '',
+          ...lines,
         ].join('\n'),
       });
       return;
